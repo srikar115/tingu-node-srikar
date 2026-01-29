@@ -95,37 +95,56 @@ const parseOptions = (content) => {
 const parseQuestionChoices = (content) => {
   if (!content || typeof content !== 'string') return [];
   
+  // Don't parse choices if content contains a plan (has step descriptions)
+  if (content.includes('Step 1:') || content.includes('Step 2:') || 
+      content.includes('prepared the plan') || content.includes('ready to start')) {
+    return [];
+  }
+  
   const allChoices = [];
   const seenChoices = new Set();
+  
+  // Model names and technical terms to exclude
+  const excludedTerms = [
+    'nano banana', 'flux', 'veo', 'kling', 'sora', 'wan', 'minimax', 'hailuo',
+    'sdxl', 'ideogram', 'runway', 'pika', 'luma', 'stable diffusion', 'dall-e',
+    'gpt', 'claude', 'gemini', 'openai', 'anthropic', 'google', 'fal.ai',
+    'credits', 'minutes', 'seconds', 'step', 'total', 'cost', 'price',
+    'image-to-video', 'text-to-video', 'text-to-image', 'pro', 'turbo', 'ultra',
+    'prompt', 'generation', 'output', 'input', 'uses step'
+  ];
   
   const addChoice = (text) => {
     if (!text || typeof text !== 'string') return;
     const clean = text.trim().replace(/^[-•*]\s*/, '').replace(/[?.,!]+$/, '').trim();
-    if (clean && clean.length >= 2 && clean.length <= 35 && !seenChoices.has(clean.toLowerCase())) {
-      if (/^(what|how|why|when|where|which|do|does|is|are|can|could|would|will)\b/i.test(clean)) return;
-      if (/\d{4}/.test(clean)) return;
-      
-      seenChoices.add(clean.toLowerCase());
-      allChoices.push({
-        value: String(clean),
-        label: String(clean.charAt(0).toUpperCase() + clean.slice(1))
-      });
-    }
+    const cleanLower = clean.toLowerCase();
+    
+    // Skip if too short/long or already seen
+    if (!clean || clean.length < 3 || clean.length > 35 || seenChoices.has(cleanLower)) return;
+    
+    // Skip questions
+    if (/^(what|how|why|when|where|which|do|does|is|are|can|could|would|will)\b/i.test(clean)) return;
+    
+    // Skip years and numbers
+    if (/\d{4}/.test(clean) || /^[\d.~$]+/.test(clean)) return;
+    
+    // Skip model names and technical terms
+    if (excludedTerms.some(term => cleanLower.includes(term))) return;
+    
+    // Skip if looks like a model version (e.g., "3.1", "2.6 Pro")
+    if (/^\d+\.?\d*\s*(pro|turbo|fast|ultra)?$/i.test(clean)) return;
+    
+    seenChoices.add(cleanLower);
+    allChoices.push({
+      value: String(clean),
+      label: String(clean.charAt(0).toUpperCase() + clean.slice(1))
+    });
   };
   
   try {
-    // Pattern 1: Bold options
-    const boldPattern = /\*\*([^*]{2,30})\*\*/g;
-    let match;
-    while ((match = boldPattern.exec(content)) !== null) {
-      const item = match[1].trim();
-      if (item.split(/\s+/).length <= 4 && !item.includes(':') && !/^(step|option|total|your|the|a|ready|plan)\s/i.test(item)) {
-        addChoice(item);
-      }
-    }
-    
-    // Pattern 2: "X, Y, or Z?"
+    // Only look for actual user choices like "Budget, Balanced, or Premium?"
     const simpleOrPattern = /(\b[\w\s/]+),\s*([\w\s/]+),?\s+or\s+([\w\s/]+)\?/gi;
+    let match;
     while ((match = simpleOrPattern.exec(content)) !== null) {
       addChoice(match[1]);
       addChoice(match[2]);
@@ -1298,11 +1317,19 @@ export default function FloatingAssistant({ user }) {
   const detectSuggestedActions = useCallback((content) => {
     const actions = [];
     
-    // When plan exists but execution not started - show "Looks good, start!" option
-    if (currentPlan && !activeExecution) {
+    // Check if last message contains a plan (even if currentPlan state isn't set yet)
+    const lastMessage = messages[messages.length - 1];
+    const hasPlanInMessages = lastMessage?.role === 'assistant' && 
+      (lastMessage?.content?.includes('Step 1:') || 
+       lastMessage?.content?.includes('prepared the plan') ||
+       lastMessage?.content?.includes('ready to start') ||
+       lastMessage?.content?.includes('Total:'));
+    
+    // When plan exists (either in state or in message) but execution not started
+    if ((currentPlan || hasPlanInMessages) && !activeExecution) {
       setSuggestedActions([
-        { label: 'Looks good, start!', value: '__EXECUTE__', primary: true },
-        { label: 'Make changes', value: "I'd like to make some changes to the plan" },
+        { label: '▶️ Looks good, start!', value: '__EXECUTE__', primary: true },
+        { label: '✏️ Make changes', value: "I'd like to make some changes to the plan" },
       ]);
       return;
     }
@@ -1326,7 +1353,7 @@ export default function FloatingAssistant({ user }) {
       !a.label.includes('[object') && typeof a.value === 'string' && !a.value.includes('[object')
     );
     setSuggestedActions(validActions);
-  }, [currentPlan, activeExecution, messages.length]);
+  }, [currentPlan, activeExecution, messages]);
 
   useEffect(() => {
     if (!isStreaming && messages.length > 0) {
@@ -1629,7 +1656,12 @@ export default function FloatingAssistant({ user }) {
 
   const handleActionClick = (value) => {
     if (value === '__EXECUTE__') {
-      handleExecute('full_auto', currentPlan);
+      if (currentPlan) {
+        handleExecute('full_auto', currentPlan);
+      } else {
+        // If plan isn't in state, ask the AI to start execution
+        handleSend("Start the generation");
+      }
     } else {
       handleSend(value);
     }
@@ -2125,8 +2157,8 @@ function CreateTab({
         </div>
       )}
 
-      {/* Suggested Actions */}
-      {suggestedActions.length > 0 && !isStreaming && !currentPlan && questionChoices.length === 0 && (
+      {/* Suggested Actions - Show even when plan exists (for Start button) */}
+      {suggestedActions.length > 0 && !isStreaming && questionChoices.length === 0 && (
         <div className="px-5 py-3 border-t border-[var(--border-color)]">
           <div className="flex flex-wrap gap-2">
             {suggestedActions.map((action, idx) => (
