@@ -380,16 +380,30 @@ function InlinePlanCard({ plan, onExecute, onEditPrompt, onStartFresh, onCreateA
   const getFinalResult = () => {
     if (!executionStatus?.generations?.length && !completedSteps.length) return null;
     
-    // Try to get from generations first
-    const lastGen = executionStatus?.generations?.[executionStatus.generations.length - 1];
-    if (lastGen?.thumbnailUrl || lastGen?.result) {
-      return { thumbnail: lastGen.thumbnailUrl || lastGen.result, fullUrl: lastGen.result };
+    // Try to get from generations first (prefer the last one)
+    const gens = executionStatus?.generations || [];
+    const completedGens = gens.filter(g => g.status === 'completed');
+    const lastGen = completedGens[completedGens.length - 1];
+    
+    if (lastGen?.result) {
+      // For videos, use the result URL directly (frontend will handle video preview)
+      const isVideo = lastGen.type === 'video' || lastGen.result?.includes('.mp4') || lastGen.result?.includes('.webm');
+      return { 
+        thumbnail: lastGen.thumbnailUrl || lastGen.result, 
+        fullUrl: lastGen.result,
+        isVideo 
+      };
     }
     
     // Fall back to step status
     const lastCompleted = completedSteps[completedSteps.length - 1];
-    if (lastCompleted?.thumbnailUrl || lastCompleted?.result) {
-      return { thumbnail: lastCompleted.thumbnailUrl || lastCompleted.result, fullUrl: lastCompleted.result };
+    if (lastCompleted?.result) {
+      const isVideo = lastCompleted.result?.includes('.mp4') || lastCompleted.result?.includes('.webm');
+      return { 
+        thumbnail: lastCompleted.thumbnailUrl || lastCompleted.result, 
+        fullUrl: lastCompleted.result,
+        isVideo 
+      };
     }
     
     return null;
@@ -458,14 +472,25 @@ function InlinePlanCard({ plan, onExecute, onEditPrompt, onStartFresh, onCreateA
               rel="noopener noreferrer"
               className="block relative group"
             >
-              <img 
-                src={finalResult.thumbnail}
-                alt="Final result"
-                className="w-full h-48 object-cover rounded-xl border border-green-500/20 group-hover:opacity-90 transition-opacity"
-              />
+              {finalResult.isVideo ? (
+                <video 
+                  src={finalResult.fullUrl}
+                  className="w-full h-48 object-cover rounded-xl border border-green-500/20 group-hover:opacity-90 transition-opacity"
+                  muted
+                  loop
+                  autoPlay
+                  playsInline
+                />
+              ) : (
+                <img 
+                  src={finalResult.thumbnail}
+                  alt="Final result"
+                  className="w-full h-48 object-cover rounded-xl border border-green-500/20 group-hover:opacity-90 transition-opacity"
+                />
+              )}
               <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                 <div className="px-4 py-2 rounded-lg bg-black/60 text-white text-sm flex items-center gap-2">
-                  <Eye className="w-4 h-4" /> View Full Size
+                  <Eye className="w-4 h-4" /> {finalResult.isVideo ? 'View Video' : 'View Full Size'}
                 </div>
               </div>
             </a>
@@ -538,11 +563,22 @@ function InlinePlanCard({ plan, onExecute, onEditPrompt, onStartFresh, onCreateA
               rel="noopener noreferrer"
               className="block"
             >
-              <img 
-                src={finalResult.thumbnail}
-                alt="Partial result"
-                className="w-full h-32 object-cover rounded-xl border border-[var(--border-color)] hover:opacity-90 transition-opacity"
-              />
+              {finalResult.isVideo ? (
+                <video 
+                  src={finalResult.fullUrl}
+                  className="w-full h-32 object-cover rounded-xl border border-[var(--border-color)] hover:opacity-90 transition-opacity"
+                  muted
+                  loop
+                  autoPlay
+                  playsInline
+                />
+              ) : (
+                <img 
+                  src={finalResult.thumbnail}
+                  alt="Partial result"
+                  className="w-full h-32 object-cover rounded-xl border border-[var(--border-color)] hover:opacity-90 transition-opacity"
+                />
+              )}
             </a>
           </div>
         )}
@@ -731,6 +767,47 @@ function InlinePlanCard({ plan, onExecute, onEditPrompt, onStartFresh, onCreateA
                           </select>
                         )}
                       </div>
+                      
+                      {/* Step Result Preview (when completed) */}
+                      {isStepCompleted && stepStatus?.result && (
+                        <div className="pt-3 border-t border-[var(--border-color)]">
+                          <p className="text-xs text-green-400 mb-2 flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Result ready
+                          </p>
+                          <a 
+                            href={stepStatus.result}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block"
+                          >
+                            {step.type === 'video' || stepStatus.result?.includes('.mp4') || stepStatus.result?.includes('.webm') ? (
+                              <video 
+                                src={stepStatus.result}
+                                className="w-full h-24 object-cover rounded-lg border border-green-500/30 hover:opacity-90 transition-opacity"
+                                muted
+                                loop
+                                autoPlay
+                                playsInline
+                              />
+                            ) : (
+                              <img 
+                                src={stepStatus.thumbnailUrl || stepStatus.result}
+                                alt={`Step ${step.order} result`}
+                                className="w-full h-24 object-cover rounded-lg border border-green-500/30 hover:opacity-90 transition-opacity"
+                              />
+                            )}
+                          </a>
+                        </div>
+                      )}
+                      
+                      {/* Step Failed Message */}
+                      {isStepFailed && (
+                        <div className="pt-3 border-t border-[var(--border-color)]">
+                          <p className="text-xs text-red-400 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" /> Generation failed - credits refunded
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 )}
